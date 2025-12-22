@@ -1,6 +1,12 @@
 build/
+gd_rhythm_trainer.spec
+
 dist/maps/**
 !dist/maps/maps.txt
 maps/*
 !maps/maps.txt
-gd_rhythm_trainer.spec
+
+dist/music/**
+!dist/music/music.txt
+music/*
+!music/music.txt

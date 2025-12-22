@@ -2,6 +2,7 @@ import argparse
 import math
 import time
 import sys
+from array import array
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -267,10 +268,18 @@ def run_app(
 ) -> None:
     import pygame
 
+    pygame.mixer.pre_init(44100, -16, 1, 512)
     pygame.init()
     pygame.display.set_caption("GD Rhythm Trainer")
     screen = pygame.display.set_mode((width, height))
     clock = pygame.time.Clock()
+
+    if getattr(sys, "frozen", False):
+        base_dir = Path(sys.executable).resolve().parent
+    else:
+        base_dir = Path(__file__).resolve().parent
+
+    music_dir = base_dir / "music"
 
     font = pygame.font.SysFont("Consolas", 18)
     big = pygame.font.SysFont("Consolas", 30, bold=True)
@@ -307,6 +316,34 @@ def run_app(
 
     toast_text = ""
     toast_until = 0.0
+
+    current_music_path: Optional[Path] = None
+    music_enabled = True
+
+    sample_rate = 44100
+    sine_freq = 432.0
+    volume = 0.35
+
+    cycles = 64
+    samples_per_cycle = int(round(sample_rate / sine_freq)) or 1
+    sample_count = samples_per_cycle * cycles
+
+    samples = array("h")
+    for i in range(sample_count):
+        phase = 2.0 * math.pi * ((i % samples_per_cycle) / samples_per_cycle)
+        s = math.sin(phase)
+        samples.append(int(32767 * volume * s))
+
+    sine_sound = pygame.mixer.Sound(buffer=samples.tobytes())
+    sine_channel = pygame.mixer.Channel(0)
+    sine_channel.play(sine_sound, loops = -1)
+    sine_channel.set_volume(0.0)
+
+    space_held = False
+    current_gain = 0.0
+    target_gain = 0.0
+    attack_ms = 8.0
+    release_ms = 18.0
 
     def toast(msg: str, seconds: float = 2.0) -> None:
         nonlocal toast_text, toast_until
@@ -373,11 +410,20 @@ def run_app(
         return target_x + int((event_t - current_t) / scroll_s * (width - target_x - margin))
 
     def go_results() -> None:
-        nonlocal state
+        nonlocal state, space_held, target_gain, current_gain
         state = "results"
+        space_held = False
+        target_gain = 0.0
+        current_gain = 0.0
+        sine_channel.set_volume(0.0)
+
+        try:
+            pygame.mixer.music.fadeout(500)
+        except Exception:
+            pygame.mixer.music.stop()
 
     def start_map(path: Path) -> None:
-        nonlocal selected, expected, notes, results, run_meta, next_idx, play_start_perf, state, win_s, lane_y, target_x
+        nonlocal selected, expected, notes, results, run_meta, next_idx, play_start_perf, state, win_s, lane_y, target_x, current_music_path
         selected = path
         try:
             gdr = load_gdr(str(path))
@@ -407,6 +453,23 @@ def run_app(
             "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "target_x_frac": str(target_frac),
         }
+
+        stem = path.stem
+        music_path: Optional[Path] = None
+        for ext in (".mp3", ".wav"):
+            candidate = music_dir / f"{stem}{ext}"
+            if candidate.exists():
+                music_path = candidate
+                break
+
+        current_music_path = music_path
+        try:
+            pygame.mixer.music.stop()
+            if music_path is not None:
+                pygame.mixer.music.load(str(music_path))
+        except Exception:
+            current_music_path = None
+            toast(f"Failed to load music for {path.name}")
 
         play_start_perf = time.perf_counter() + max(0.0, lead_in_s)
         state = "lead_in"
@@ -457,6 +520,7 @@ def run_app(
     running = True
     while running:
         clock.tick(240)
+        dt_s = clock.get_time() / 1000.0
 
         mx, my = pygame.mouse.get_pos()
         clicked = False
@@ -502,10 +566,26 @@ def run_app(
                     scroll_offset = max(0, min(max_offset, new_offset))
             elif state == "play":
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
+                    if not space_held:
+                        space_held = True
+                        target_gain = volume
                     record_input("down", now_t())
+
                 elif event.type == pygame.KEYUP and event.key == pygame.K_SPACE:
+                    space_held = False
+                    target_gain = 0.0
                     record_input("up", now_t())
 
+        if dt_s > 0.0:
+            if target_gain > current_gain:
+                step = (volume / (attack_ms / 1000.0)) * dt_s
+                current_gain = min(target_gain, current_gain + step)
+            else:
+                step = (volume / (release_ms / 1000.0)) * dt_s
+                current_gain = max(target_gain, current_gain - step)
+
+            sine_channel.set_volume(current_gain)
+            
         screen.fill((18, 18, 24))
 
         if state == "home":
@@ -563,12 +643,16 @@ def run_app(
                         pygame.draw.rect(screen, (140, 140, 170), thumb_rect, border_radius=6)
 
             b_refresh = Button(pygame.Rect(30, height - 60, 150, 40), "Refresh")
+            b_music = Button(pygame.Rect((width - 180) // 2, height - 60, 180, 40), f"Music: {'ON' if music_enabled else 'OFF'}")
             b_quit = Button(pygame.Rect(width - 180, height - 60, 150, 40), "Quit")
-            for b in (b_refresh, b_quit):
+            for b in (b_refresh, b_music, b_quit):
                 b.draw(screen, font, hovered=b.hit(mx, my))
             if clicked and b_refresh.hit(mx, my):
                 refresh_maps()
                 toast("Refreshed map list")
+            if clicked and b_music.hit(mx, my):
+                music_enabled = not music_enabled
+                toast("Music disabled" if not music_enabled else "Music enabled")
             if clicked and b_quit.hit(mx, my):
                 running = False
 
@@ -581,6 +665,11 @@ def run_app(
                 screen.blit(small.render(f"Map: {selected.name}", True, (175, 175, 175)), (30, 100))
             if time.perf_counter() >= play_start_perf:
                 state = "play"
+                if current_music_path is not None and music_enabled:
+                    try:
+                        pygame.mixer.music.play()
+                    except Exception:
+                        toast("Failed to play music")
 
         elif state == "play":
             t = now_t()
@@ -703,7 +792,7 @@ def run_app(
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(prog="gd_rhythm_trainer", description="Precision-focused 1D GD macro click trainer (.gdr)")
+    ap = argparse.ArgumentParser(prog="GD Rhythm Trainer", description="Precision-focused 1D GD macro click trainer (.gdr)")
     ap.add_argument("--dir", type=str, default="", help="Directory to scan for .gdr maps (default: directory containing this .py)")
     ap.add_argument("--btn", type=int, default=1, help="Button id to use (default: 1)")
     ap.add_argument("--p2", action="store_true", help="Use 2p inputs instead of 1p")

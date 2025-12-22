@@ -1,0 +1,4 @@
+build/
+dist/maps/**
+maps/**
+gd_rhythm_trainer.spec

@@ -344,6 +344,7 @@ def run_app(
     target_gain = 0.0
     attack_ms = 8.0
     release_ms = 18.0
+    beep_next_idx = 0
 
     def toast(msg: str, seconds: float = 2.0) -> None:
         nonlocal toast_text, toast_until
@@ -410,11 +411,12 @@ def run_app(
         return target_x + int((event_t - current_t) / scroll_s * (width - target_x - margin))
 
     def go_results() -> None:
-        nonlocal state, space_held, target_gain, current_gain
+        nonlocal state, space_held, target_gain, current_gain, beep_next_idx
         state = "results"
         space_held = False
         target_gain = 0.0
         current_gain = 0.0
+        beep_next_idx = 0
         sine_channel.set_volume(0.0)
 
         try:
@@ -566,14 +568,10 @@ def run_app(
                     scroll_offset = max(0, min(max_offset, new_offset))
             elif state == "play":
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
-                    if not space_held:
-                        space_held = True
-                        target_gain = volume
                     record_input("down", now_t())
 
                 elif event.type == pygame.KEYUP and event.key == pygame.K_SPACE:
                     space_held = False
-                    target_gain = 0.0
                     record_input("up", now_t())
 
         if dt_s > 0.0:
@@ -665,6 +663,10 @@ def run_app(
                 screen.blit(small.render(f"Map: {selected.name}", True, (175, 175, 175)), (30, 100))
             if time.perf_counter() >= play_start_perf:
                 state = "play"
+                beep_next_idx = 0
+                space_held = False
+                target_gain = 0.0
+                current_gain = 0.0
                 if current_music_path is not None and music_enabled:
                     try:
                         pygame.mixer.music.play()
@@ -674,6 +676,15 @@ def run_app(
         elif state == "play":
             t = now_t()
             finalize_misses(t)
+
+            if not music_enabled and expected:
+                while beep_next_idx < len(expected) and expected[beep_next_idx].t <= t:
+                    ev = expected[beep_next_idx]
+                    if ev.kind == "down":
+                        target_gain = volume
+                    else:
+                        target_gain = 0.0
+                    beep_next_idx += 1
 
             pygame.draw.line(screen, (120, 120, 140), (0, lane_y), (width, lane_y), 1)
             pygame.draw.line(screen, (240, 240, 240), (target_x, lane_y - 90), (target_x, lane_y + 90), 2)

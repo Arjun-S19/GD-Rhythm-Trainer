@@ -319,6 +319,7 @@ def run_app(
 
     current_music_path: Optional[Path] = None
     music_enabled = True
+    beep_enabled = True
 
     sample_rate = 44100
     sine_freq = 432.0
@@ -641,9 +642,12 @@ def run_app(
                         pygame.draw.rect(screen, (140, 140, 170), thumb_rect, border_radius=6)
 
             b_refresh = Button(pygame.Rect(30, height - 60, 150, 40), "Refresh")
-            b_music = Button(pygame.Rect((width - 180) // 2, height - 60, 180, 40), f"Music: {'ON' if music_enabled else 'OFF'}")
+            center_block_w = 2 * 180 + 20
+            center_x = (width - center_block_w) // 2
+            b_music = Button(pygame.Rect(center_x, height - 60, 180, 40), f"Music: {'ON' if music_enabled else 'OFF'}")
+            b_beep = Button(pygame.Rect(center_x + 180 + 20, height - 60, 180, 40), f"Beep: {'ON' if beep_enabled else 'OFF'}")
             b_quit = Button(pygame.Rect(width - 180, height - 60, 150, 40), "Quit")
-            for b in (b_refresh, b_music, b_quit):
+            for b in (b_refresh, b_music, b_beep, b_quit):
                 b.draw(screen, font, hovered=b.hit(mx, my))
             if clicked and b_refresh.hit(mx, my):
                 refresh_maps()
@@ -651,6 +655,11 @@ def run_app(
             if clicked and b_music.hit(mx, my):
                 music_enabled = not music_enabled
                 toast("Music disabled" if not music_enabled else "Music enabled")
+            if clicked and b_beep.hit(mx, my):
+                beep_enabled = not beep_enabled
+                if not beep_enabled:
+                    target_gain = 0.0
+                toast("Beep disabled" if not beep_enabled else "Beep enabled")
             if clicked and b_quit.hit(mx, my):
                 running = False
 
@@ -677,7 +686,7 @@ def run_app(
             t = now_t()
             finalize_misses(t)
 
-            if not music_enabled and expected:
+            if beep_enabled and expected:
                 while beep_next_idx < len(expected) and expected[beep_next_idx].t <= t:
                     ev = expected[beep_next_idx]
                     if ev.kind == "down":
@@ -781,21 +790,11 @@ def run_app(
                     start_map(selected)
 
         if toast_text and time.perf_counter() < toast_until:
-            if state == "home" and toast_text == "Refreshed map list":
-                msg_surf = small.render(toast_text, True, (220, 220, 220))
-                box_w = msg_surf.get_width() + 32
-                box_h = 40
-                box = pygame.Rect(0, 0, box_w, box_h)
-                box.center = (width // 2, height - 40)
-                pygame.draw.rect(screen, (30, 30, 40), box, border_radius=10)
-                pygame.draw.rect(screen, (120, 120, 140), box, 1, border_radius=10)
-                screen.blit(msg_surf, (box.x + (box_w - msg_surf.get_width()) // 2, box.y + 10))
-            else:
-                box = pygame.Rect(0, 0, width - 60, 36)
-                box.center = (width // 2, height - 120)
-                pygame.draw.rect(screen, (30, 30, 40), box, border_radius=10)
-                pygame.draw.rect(screen, (120, 120, 140), box, 1, border_radius=10)
-                screen.blit(small.render(toast_text, True, (220, 220, 220)), (box.x + 12, box.y + 9))
+            box = pygame.Rect(0, 0, width - 60, 36)
+            box.center = (width // 2, height - 120)
+            pygame.draw.rect(screen, (30, 30, 40), box, border_radius=10)
+            pygame.draw.rect(screen, (120, 120, 140), box, 1, border_radius=10)
+            screen.blit(small.render(toast_text, True, (220, 220, 220)), (box.x + 12, box.y + 9))
 
         pygame.display.flip()
 
@@ -808,10 +807,10 @@ def main() -> None:
     ap.add_argument("--btn", type=int, default=1, help="Button id to use (default: 1)")
     ap.add_argument("--p2", action="store_true", help="Use 2p inputs instead of 1p")
     ap.add_argument("--fps", type=float, default=0.0, help="Override FPS (auto-infer if 0)")
-    ap.add_argument("--window-ms", type=float, default=18.0, help="Hit window in milliseconds (±)")
+    ap.add_argument("--window-ms", type=float, default=18.0, help="Hit window in milliseconds")
     ap.add_argument("--lead-in", type=float, default=1.5, help="Countdown seconds before play starts")
     ap.add_argument("--scroll-s", type=float, default=2.5, help="Seconds visible ahead on timeline")
-    ap.add_argument("--hold-min-frames", type=int, default=3, help="Minimum DOWN->UP duration (frames) to draw as a hold note")
+    ap.add_argument("--hold-min-frames", type=int, default=3, help="Minimum DOWN -> UP duration (in frames) to draw as a hold note")
     ap.add_argument("--lane-y", type=float, default=0.55, help="Vertical lane position as fraction of height")
     ap.add_argument("--target-frac", type=float, default=1.0 / 3.0, help="Target position as fraction of screen width")
     ap.add_argument("--width", type=int, default=980)
